@@ -1,0 +1,531 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "collapsed_sections": [],
+      "toc_visible": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "accelerator": "TPU"
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Sistema de filtragem colaborativa\n",
+        "\n",
+        "Este notebook tem como objetivo ser uma PoC (Proof of Concept) de um sistema de recomendação de item (baseado em filtragem colaborativa) em um dataset de filmes e ratings por usuario."
+      ],
+      "metadata": {
+        "id": "xlRa9YwkR8mM"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Instalação\n",
+        "\n",
+        "Este notebook utiliza a biblioteca *surprise* para a construção do modelo de recomendação. Esta biblioteca não existe por padrão no colab portanto devemos instalá-la através do pip.\n",
+        "\n",
+        "Esta biblioteca faz parte do \"guarda-chuva\" das bibliotecas do scikit-learn, portanto não fugirá muito dos preceitos e princípios aprendidos em aula."
+      ],
+      "metadata": {
+        "id": "1wg4Mf8XNMLS"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Installing dependencies\n",
+        "\n",
+        "!pip install surprise"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "KwwjVgsjcMWJ",
+        "outputId": "ecd337f0-6f6d-43ce-f417-d266164d6710"
+      },
+      "execution_count": 2,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Looking in indexes: https://pypi.org/simple, https://us-python.pkg.dev/colab-wheels/public/simple/\n",
+            "Collecting surprise\n",
+            "  Downloading surprise-0.1-py2.py3-none-any.whl (1.8 kB)\n",
+            "Collecting scikit-surprise\n",
+            "  Downloading scikit-surprise-1.1.1.tar.gz (11.8 MB)\n",
+            "\u001b[K     |████████████████████████████████| 11.8 MB 4.9 MB/s \n",
+            "\u001b[?25hRequirement already satisfied: joblib>=0.11 in /usr/local/lib/python3.7/dist-packages (from scikit-surprise->surprise) (1.2.0)\n",
+            "Requirement already satisfied: numpy>=1.11.2 in /usr/local/lib/python3.7/dist-packages (from scikit-surprise->surprise) (1.21.6)\n",
+            "Requirement already satisfied: scipy>=1.0.0 in /usr/local/lib/python3.7/dist-packages (from scikit-surprise->surprise) (1.7.3)\n",
+            "Requirement already satisfied: six>=1.10.0 in /usr/local/lib/python3.7/dist-packages (from scikit-surprise->surprise) (1.15.0)\n",
+            "Building wheels for collected packages: scikit-surprise\n",
+            "  Building wheel for scikit-surprise (setup.py) ... \u001b[?25l\u001b[?25hdone\n",
+            "  Created wheel for scikit-surprise: filename=scikit_surprise-1.1.1-cp37-cp37m-linux_x86_64.whl size=1633975 sha256=b4595b5c62241b80de197cf2b04f433255c73a5e7c473985ece713c3809024a2\n",
+            "  Stored in directory: /root/.cache/pip/wheels/76/44/74/b498c42be47b2406bd27994e16c5188e337c657025ab400c1c\n",
+            "Successfully built scikit-surprise\n",
+            "Installing collected packages: scikit-surprise, surprise\n",
+            "Successfully installed scikit-surprise-1.1.1 surprise-0.1\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Importação de Dependências\n",
+        "\n",
+        "Utilizaremos, além da biblioteca surprise, as bibliotecas *pandas* e *scikit-learn*, que já vêm instaladas por padrão no colab.\n",
+        "\n",
+        "Além disso, realizei os imports das bases utilizadas e hospedadas no GitHub.\n",
+        "\n",
+        "Link do conteúdo original dos datasets: https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset"
+      ],
+      "metadata": {
+        "id": "yoi74sw5NjfV"
+      }
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 3,
+      "metadata": {
+        "id": "hj5qpPi4RtlH"
+      },
+      "outputs": [],
+      "source": [
+        "import pandas as pd\n",
+        "from surprise import KNNWithMeans, Reader, Dataset, accuracy\n",
+        "from surprise.model_selection import train_test_split\n",
+        "from sklearn.decomposition import TruncatedSVD\n",
+        "\n",
+        "MOVIES_METADATA_PATH = 'https://raw.githubusercontent.com/murilo-bracero/filtragem_colaborativa_unicsul/main/movies_metadata.csv'\n",
+        "MOVIES_RATINGS_PATH = 'https://raw.githubusercontent.com/murilo-bracero/filtragem_colaborativa_unicsul/main/ratings_small.csv'"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Extração dos dados crus\n",
+        "\n",
+        "Neste momento utilizamos a biblioteca *pandas* para ler e indexar os conteúdos das bases"
+      ],
+      "metadata": {
+        "id": "REskHgCEORSJ"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Extraction\n",
+        "\n",
+        "df_metadata = pd.read_csv(MOVIES_METADATA_PATH)\n",
+        "df_ratings = pd.read_csv(MOVIES_RATINGS_PATH)"
+      ],
+      "metadata": {
+        "id": "mJkjfZE4TDAT",
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "outputId": "12077a58-7b6d-406e-e847-6b843918571f"
+      },
+      "execution_count": 4,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.7/dist-packages/IPython/core/interactiveshell.py:3326: DtypeWarning: Columns (10) have mixed types.Specify dtype option on import or set low_memory=False.\n",
+            "  exec(code_obj, self.user_global_ns, self.user_ns)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Limpeza dos dados\n",
+        "\n",
+        "Aqui realizo uma limpeza dos dados, tanto da base de classificações (*ratings*) quanto da de filmes propriamente ditos, removendo colunas que não utilizaremos"
+      ],
+      "metadata": {
+        "id": "hL6iC3j0Oelc"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Cleaning columns\n",
+        "df_ratings.drop('timestamp', axis=1, inplace=True)\n",
+        "\n",
+        "df_metadata.drop(['belongs_to_collection', 'genres', 'overview'], axis=1, inplace=True)\n",
+        "\n"
+      ],
+      "metadata": {
+        "id": "OsFNijgEUQOC"
+      },
+      "execution_count": 5,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Removendo *outliers* e fusão dos datasets\n",
+        "\n",
+        "Para facilitar a análise dos dados pelo modelo e futuramente pelo código do notebook, realizo aqui uma remoção de *outliers*, ou seja, dados malformados ou de baixa relevância para nosso modelo que, neste caso, somente atrapalharia a análise.\n",
+        "\n",
+        "Além da limpeza, uno o dataset de ratings com o dataset de metadados dos filmes para facilitar a busca destes filmes no futuro."
+      ],
+      "metadata": {
+        "id": "STIrIVB7O06F"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Cleaning data\n",
+        "\n",
+        "# Removing outliers\n",
+        "df_metadata = df_metadata.drop(labels=[19730, 29503, 35587], axis=0)\n",
+        "\n",
+        "# transforming type id into int for merge\n",
+        "df_metadata['id'] = df_metadata['id'].astype(int)\n",
+        "\n",
+        "# merge into a unique dataset\n",
+        "df_movies = pd.merge(df_ratings, df_metadata, how='inner', left_on='movieId', right_on='id')"
+      ],
+      "metadata": {
+        "id": "hua4N4xVQwyi"
+      },
+      "execution_count": 6,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Criação do dataset de análise\n",
+        "\n",
+        "Com os datasets devidamente limpos e unificados, agora é realizada a extração dos dados que será usados somente para o treino, teste e evaluação do modelo, utilizando somente as colunas de identificadores de usuários, classificação que o usuário deu ao filme e o título do mesmo. "
+      ],
+      "metadata": {
+        "id": "i9RL7FbGPqMX"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Checking dataset\n",
+        "\n",
+        "df_movies_subset = df_movies[['userId', 'title', 'rating']]"
+      ],
+      "metadata": {
+        "id": "EdyQHe5DZQSr"
+      },
+      "execution_count": 7,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Performando a leitura\n",
+        "\n",
+        "Diferente da maioria dos modelos nativos do Scikit-Learn, a Surprise possui uma classe específica para leitura dos datasets, e utilizaremos ela nesta parte.\n",
+        "\n",
+        "O objetivo dela é limitar e aumentar a performance da leitura do modelo em tempo de treino/teste, e precisa necessariamente seguir o modelo do dataset de análisec criado anteriormente.\n",
+        "\n",
+        "Além disso, é nessa classe que estabelecemos os limites de nossas classificações. Como o dataset utilizado utiliza o padrão comum de classificação de filmes (de 1 a 5 estrelas), podemos estabelecer este limite logo na instância do *Reader*.\n",
+        "\n",
+        "Para mais informações, [acesse a documentação oficial](https://surprise.readthedocs.io/en/stable/reader.html)"
+      ],
+      "metadata": {
+        "id": "Ybjt_RPiP_6l"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Starting model building\n",
+        "\n",
+        "# reading dataset\n",
+        "# rating scale can be mannually adjusted because ratings will ever be grather than 1 and less than 5\n",
+        "sp_reader = Reader(rating_scale=(1, 5))\n",
+        "sp_model_data = Dataset.load_from_df(df_movies_subset, sp_reader) "
+      ],
+      "metadata": {
+        "id": "IQpTW6rAb8CI"
+      },
+      "execution_count": 8,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Separando testes e treinos\n",
+        "\n",
+        "Nesta etapada utilizamos a função do scikit-learn `train_test_split`, já utilizada nas aulas anteriormente, que tem como objetivo separar de forma aleatória amostras de dados baseados em uma *seed* e em um indicador de tamanho para que passamos ter bases de treino e teste mais confiáveis."
+      ],
+      "metadata": {
+        "id": "fGrWl3hERDya"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# splitting dataset for fit and test\n",
+        "\n",
+        "SEED=10\n",
+        "\n",
+        "fit_set, test_set = train_test_split(sp_model_data, \n",
+        "                                     test_size=0.33, # Extracting exact 1/3 of dataaset for testing\n",
+        "                                     random_state=SEED \n",
+        "                                     )"
+      ],
+      "metadata": {
+        "id": "gX1-SgxjdKwB"
+      },
+      "execution_count": 9,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Criação do Modelo\n",
+        "\n",
+        "Nesta etapa instânciamos o modelo de recomendação que será utilizado neste notebook.\n",
+        "\n",
+        "O KNNWithMeans é um modelo de inteligência artifical focado em recomendação de conteúdos que utiliza uma estratégia de filtragem colaborativa de conteúdos para realizar recomendações genéricas para um grupo de usuários em comum.\n",
+        "\n",
+        "É amplamente utilizado tanto por plataformas de entretenimento quanto por e-commerces para recomendar conteúdos para grupos de usuários semelhantes.\n",
+        "\n",
+        "A sigla KNN deriva de K-Nearest Neighbors, ou seja, K-enésemos vizinhos próximos, que faz uma referência ao objetivo do modelo."
+      ],
+      "metadata": {
+        "id": "xmnnZL3gRm7e"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Creating a user_based K-Nearest Neighbors model with ratings mean\n",
+        "\n",
+        "ub_model = KNNWithMeans(k=5, sim_options={'user_based': True})\n",
+        "\n",
+        "ub_model"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "YJ2Ks3UCd43s",
+        "outputId": "46085f64-925f-4bda-bb4a-46a2f90b1e20"
+      },
+      "execution_count": 10,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "<surprise.prediction_algorithms.knns.KNNWithMeans at 0x7fb8faa4e850>"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 10
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Treino do modelo\n",
+        "\n",
+        "Aqui utilizamos a base de treino criada anteriormente"
+      ],
+      "metadata": {
+        "id": "MToWt1BRSzA7"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Training model\n",
+        "\n",
+        "ub_model.fit(fit_set)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "Q5AoyhD6ejLy",
+        "outputId": "b8d0cbe9-8669-41ee-d8e9-412bb6b15b8f"
+      },
+      "execution_count": 11,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Computing the msd similarity matrix...\n",
+            "Done computing similarity matrix.\n"
+          ]
+        },
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "<surprise.prediction_algorithms.knns.KNNWithMeans at 0x7fb8faa4e850>"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 11
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Teste do Modelo\n",
+        "\n",
+        "Aqui testamos o modelo e medimos a RMSE, ou seja, a raiz quadrática de erro média, que avalia a qualidade do nosso modelo para com as previsões feitas.\n",
+        "\n",
+        "A RMSE nos mostra que, dada a amostra de classificações que temos dos filmes, nosso modelo possui uma margem de erro entre 0.95 e 0.97 \"estrelas\", o que, dado o tamanho de nosso dataset de classificações, é um score OK."
+      ],
+      "metadata": {
+        "id": "GJt0iRKgS2_H"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Testing model\n",
+        "test_results = ub_model.test(test_set)"
+      ],
+      "metadata": {
+        "id": "eHGDKh7ff1I5"
+      },
+      "execution_count": 12,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Getting our mean error matrix\n",
+        "\n",
+        "rmse = accuracy.rmse(test_results, verbose=True)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "lddGzwtngBFv",
+        "outputId": "6496f70d-4bec-41a2-8e45-43e2d9d7f816"
+      },
+      "execution_count": 13,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "RMSE: 0.9709\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Avaliando o modelo\n",
+        "\n",
+        "Com nosso modelo treinado e testado, podemos começar a obter previsões com base no perfil de usuário desejado.\n",
+        "\n",
+        "O modelo KNNWithMeans, especificamente, funciona com um sistema baseado em indexes, ou seja, têm-se como entrada o index da avaliação do usuário que se deseja colher recomendações e, baseado nela, o modelo busca os *K* perfis que tiveram uma opinião semelhante a dele e recomenda filmes baseados nessa opinião. "
+      ],
+      "metadata": {
+        "id": "NLh9Fg3IzHH7"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# At this point the model training and testing are finished, so this is how works\n",
+        "\n",
+        "MOVIE_INDEX = 312\n",
+        "NUM_OF_RECOMMENDATIONS = 5\n",
+        "\n",
+        "print('Análise Selecionada: ')\n",
+        "selected_movie = df_movies.iloc[MOVIE_INDEX]\n",
+        "print(f\"\\t-{selected_movie['title']} - ⭐ {selected_movie['rating']}\" )\n",
+        "\n",
+        "print('\\n')\n",
+        "\n",
+        "print('Filmes recomendados: ')\n",
+        "\n",
+        "recommended_movie_names = []\n",
+        "\n",
+        "recommendations_pivot = NUM_OF_RECOMMENDATIONS\n",
+        "\n",
+        "while len(recommended_movie_names) < NUM_OF_RECOMMENDATIONS:\n",
+        "  rec_i = ub_model.get_neighbors(MOVIE_INDEX,recommendations_pivot)\n",
+        "  df_selected = df_movies_subset.iloc[rec_i]\n",
+        "\n",
+        "  for record in df_selected.to_records():\n",
+        "    recommended_movie_names.append(record[2])\n",
+        "\n",
+        "  recommended_movie_names = list(dict.fromkeys(recommended_movie_names))\n",
+        "  recommendations_pivot = recommendations_pivot + 1\n",
+        "\n",
+        "for name in recommended_movie_names:\n",
+        "  print('\\t-', name)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "sANFPuQUgyiF",
+        "outputId": "89d40c99-240c-4a7d-afbb-31391f93071b"
+      },
+      "execution_count": 19,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Análise Selecionada: \n",
+            "\t-The Dark - ⭐ 4.0\n",
+            "\n",
+            "\n",
+            "Filmes recomendados: \n",
+            "\t- Greed\n",
+            "\t- American Pie\n",
+            "\t- My Tutor\n",
+            "\t- Jay and Silent Bob Strike Back\n",
+            "\t- Confidentially Yours\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# Conclusão\n",
+        "\n",
+        "Através deste notebook podemos observar mais de perto o verdadeiro poder da inteligência artificial industrial, mais precisamente sua utilidade para com a recomendação de conteúdos para grupos de usuários.\n",
+        "\n",
+        "Um outro motivo pelo qual este modelo é amplamente utilizado é que, como ele leva em consideração avaliações já realizadas por usuários, seu tempo de vida acaba sendo maior quando em comparação a modelos de recomendação pessoal em tempo real, que exigem massas de dados muito mais densas, detalhadas e tem um período útil relativamente curto até ter de ser treinado novamente."
+      ],
+      "metadata": {
+        "id": "P7Jv5c8f1ZZw"
+      }
+    }
+  ]
+}
